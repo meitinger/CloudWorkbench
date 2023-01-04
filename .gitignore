@@ -1,0 +1,6 @@
+/.*/
+/aws/.*
+/aws/function/node_modules
+/azure/.*
+/azure/function/node_modules
+/gcp/.*

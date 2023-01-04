@@ -1,0 +1,9 @@
+{
+  "name": "function",
+  "version": "0.1",
+  "description": "",
+  "dependencies": {
+    "@google-cloud/storage": "^6.x"
+  },
+  "devDependencies": {}
+}

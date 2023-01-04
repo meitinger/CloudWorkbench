@@ -1,0 +1,10 @@
+{
+  "name": "function",
+  "version": "0.1",
+  "description": "",
+  "dependencies": {
+    "@azure/identity": "^3.x",
+    "@azure/storage-blob": "^12.x"
+  },
+  "devDependencies": {}
+}
