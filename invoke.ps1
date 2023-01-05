@@ -315,10 +315,9 @@ const files = [
   ...sizes.map(size => [``random_`${size}.bin``, () => randomBytes(size)])
 ]
 $(Switch ($Provider) {
-
-    'AWS' {
-
-"const s3 = $AWS_S3
+'AWS' {
+"
+const s3 = $AWS_S3
 const errors = []
 for (const [file, content] of files) {
   try {
@@ -336,11 +335,11 @@ for (const [file, content] of files) {
     })
   }
 }
-return errors"
-
-    } 'GCP' {
-
-"const storage = $GCP_Storage
+return errors
+"
+} 'GCP' {
+"
+const storage = $GCP_Storage
 const errors = []
 for (const [file, content] of files) {
   try {
@@ -354,11 +353,11 @@ for (const [file, content] of files) {
     })
   }
 }
-return errors"
-
-    } 'Azure' {
-
-"const containerClient = $Azure_ContainerClient
+return errors
+"
+} 'Azure' {
+"
+const containerClient = $Azure_ContainerClient
 const errors = []
 for (const [file, content] of files) {
   const blockBlockClient = containerClient.getBlockBlobClient(file)
@@ -373,13 +372,9 @@ for (const [file, content] of files) {
     })
   }
 }
-return errors"
-
-    } Default {
-
-        Throw [System.NotImplementedException]::new()
-
-    }
+return errors
+"
+} Default { Throw [System.NotImplementedException]::new() }
 })"
 }
 
@@ -466,8 +461,9 @@ Filter Clear-CloudFiles {
 
     Invoke-CloudFunction -Provider $Provider -Region $Region -Command `
 "$(Switch ($Provider) {
-    'AWS' {
-"const s3 = $AWS_S3
+'AWS' {
+"
+const s3 = $AWS_S3
 const errors = []
 let marker = ''
 while (true) {
@@ -496,10 +492,11 @@ while (true) {
   }
   marker = listObjects.Marker
 }
-return errors"
-    }
-    'GCP' {
-"const storage = $GCP_Storage
+return errors
+"
+} 'GCP' {
+"
+const storage = $GCP_Storage
 const [files] = await storage.bucket(process.env.BUCKET).getFiles()
 const errors = []
 for (const file of files) {
@@ -514,10 +511,11 @@ for (const file of files) {
     })
   }
 }
-return errors"
-    }
-    'Azure' {
-"const containerClient = $Azure_ContainerClient
+return errors
+"
+} 'Azure' {
+"
+const containerClient = $Azure_ContainerClient
 const errors = []
 for await (const blob of containerClient.listBlobsFlat()) {
   try {
@@ -531,9 +529,9 @@ for await (const blob of containerClient.listBlobsFlat()) {
     })
   }
 }
-return errors"
-    }
-    Default { Throw [System.NotImplementedException]::new() }
+return errors
+"
+} Default { Throw [System.NotImplementedException]::new() }
 })"
 }
 
@@ -621,151 +619,59 @@ Filter Test-CloudOcrTransfer {
         [string] $Region
     )
 
+    $fetchTesk = `
+"const hrt = process.hrtime()
+const response = await fetch(task.uri, task.options)
+const time = process.hrtime(hrt)"
     If ($Region -notin $OcrRegions[$Provider]) { Throw "Unknown OCR region '$Region', supported are $($OcrRegions[$Provider] -join ', ')." }
     Invoke-CloudFunction -Provider $Provider -Region $Region -Command `
-"const root = $(Get-CloudFileRoot -Provider $Provider -Region $Region | ConvertTo-Json)
-const files = [
+"const files = [
   ['image_ping.png', 45],
   ['image_full.png', 4182861]
 ]
 const results = []
 for (const [file, expectedSize] of files) {
   for (let batch = 1; batch <= 5; batch++) {
-    const url = root + file
     try {
 $(Switch ($Provider) {
-
-    'AWS' {
-
-"const { createHash, createHmac } = await import('node:crypto')
-const method = 'POST'
-const host = ``rekognition.`${process.env.REGION}.amazonaws.com``
-const target = 'RekognitionService.DetectText'
-const body = JSON.stringify({
-  Image: {
-    S3Object: {
-      Bucket: $(ConvertTo-Json "$AWS_Prefix-$($Region.ToLowerInvariant())"),
-      Name: file
-    }
-  }
-})
-const bodyHash = createHash('sha256').update(body).digest('hex')
-const dateIso = new Date().toISOString().replace(/[:\-]|\.\d{3}/g, '')
-const datePart = dateIso.substr(0, 8)
-const service = 'rekognition'
-const v4Identifier = 'aws4_request'
-const credentialString = ```${datePart}/`${process.env.REGION}/`${service}/`${v4Identifier}``
-const signedHeaders = 'host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-target'
-const algorithm = 'AWS4-HMAC-SHA256'
-const canonicalString = [
-  method,
-  '/',
-  '',
-  'host:' + host,
-  'x-amz-content-sha256:' + bodyHash,
-  'x-amz-date:' + dateIso,
-  'x-amz-security-token:' + process.env.AWS_SESSION_TOKEN,
-  'x-amz-target:' + target,
-  '',
-  signedHeaders,
-  bodyHash
-].join('\n')
-const stringToSign = [
-  algorithm,
-  dateIso,
-  credentialString,
-  createHash('sha256').update(canonicalString).digest('hex')
-].join('\n')
-const kDate = createHmac('sha256', 'AWS4' + process.env.AWS_SECRET_ACCESS_KEY).update(datePart).digest()
-const kRegion = createHmac('sha256', kDate).update(process.env.REGION).digest()
-const kService = createHmac('sha256', kRegion).update(service).digest()
-const kSigning = createHmac('sha256', kService).update(v4Identifier).digest()
-const signature = createHmac('sha256', kSigning).update(stringToSign).digest('hex')
-const options = {
-  method,
-  headers: {
-    'Authorization': ```${algorithm} Credential=`${process.env.AWS_ACCESS_KEY_ID}/`${credentialString}, SignedHeaders=`${signedHeaders}, Signature=`${signature}``,
-    'Content-Type': 'application/x-amz-json-1.1',
-    'Host': host,
-    'X-Amz-Content-Sha256':bodyHash,
-    'X-Amz-Date': dateIso,
-    'X-Amz-Security-Token': process.env.AWS_SESSION_TOKEN,
-    'X-Amz-Target': target
-  },
-  body
-}
-const hrt = process.hrtime()
-const response = await fetch(``https://`${host}/``, options)
-const time = process.hrtime(hrt)
-if (response.status !== 400) {
-  throw ``DetectText finished with `${response.status} `${response.statusText}.``
-}
-const failure = await response.json()
-if (failure.__type !== 'InvalidImageFormatException') {
-  throw ``DetectText failed with `${failure.__type}.``
-}
+'AWS' {
 "
-
-    } 'GCP' {
-
-"const { GoogleAuth } = require('google-auth-library')
-const auth = new GoogleAuth({ scopes: 'https://www.googleapis.com/auth/cloud-platform' })
-const token = await auth.getAccessToken()
-const body = {
-  requests: {
-    image: { source: { imageUri: root + file } },
-    features: { type: 'TEXT_DETECTION' }
-  }
-}
-const options = {
-  method: 'POST',
-  headers: { 'Authorization': 'Bearer ' + token },
-  body: JSON.stringify(body)
-}
-const hrt = process.hrtime()
-const response = await fetch('https://vision.googleapis.com/v1/images:annotate', options)
-const time = process.hrtime(hrt)
-const error = (await response.json()).responses[0].error
-if (!error) {
-  throw 'Annotate did not return an error.'
-}
-if (error.message !== 'Bad image data.') {
-  throw ``Annotate failed with `${error.message}.``
-  // very likely 'Annotate failed with We can not access the URL currently. Please download the content and pass it in.'
-}
+      const task = await $AWS_Ocr(file)
+      $fetchTesk
+      if (response.status !== 400) {
+        throw ``DetectText finished with `${response.status} `${response.statusText}.``
+      }
+      const failure = await response.json()
+      if (failure.__type !== 'InvalidImageFormatException') {
+        throw ``DetectText failed with `${failure.__type}.``
+      }
 "
-
-    } 'Azure' {
-
+} 'GCP' {
 "
-const hrt = process.hrtime()
-const response = await fetch(
-  ``https://`${process.env.REGION}.api.cognitive.microsoft.com/vision/v3.2/ocr``,
-  {
-    method: 'POST',
-    cache: 'no-cache',
-    headers: {
-      'Content-Type': 'application/json',
-      'Ocp-Apim-Subscription-Key': $(ConvertTo-Json $Azure_CognitiveKeys[$Region])
-    },
-    body: JSON.stringify({ url })
-  }
-)
-const time = process.hrtime(hrt)
-if (response.status !== 400) {
-  throw ``OCR finished with `${response.status} `${response.statusText}.``
-}
-const failure = await response.json()
-if (failure.error.innererror.code !== 'InvalidImageFormat') {
-  throw ``OCR failed with `${failure.error.innererror.code}.``
-}
+      const task = await $GCP_Ocr(file)
+      $fetchTesk
+      const error = (await response.json()).responses[0].error
+      if (!error) {
+        throw 'Annotate did not return an error.'
+      }
+      if (error.message !== 'Bad image data.') {
+        throw ``Annotate failed with `${error.message}.``
+        // very likely 'Annotate failed with We can not access the URL currently. Please download the content and pass it in.'
+      }
 "
-
-    } Default {
-
-        Throw [System.NotImplementedException]::new()
-
-    }
+} 'Azure' {
+"
+      const task = await $Azure_Ocr(file, $(ConvertTo-Json $Azure_CognitiveKeys[$Region]))
+      $fetchTesk
+      if (response.status !== 400) {
+        throw ``OCR finished with `${response.status} `${response.statusText}.``
+      }
+      const failure = await response.json()
+      if (failure.error.innererror.code !== 'InvalidImageFormat') {
+        throw ``OCR failed with `${failure.error.innererror.code}.``
+      }
+"
+} Default { Throw [System.NotImplementedException]::new() }
 })
       results.push({ batch, file, ocr: true, time })
     }
