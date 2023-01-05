@@ -1,29 +1,45 @@
-﻿Set-StrictMode -Version Latest
+﻿# Copyright (C) 2023, Manuel Meitinger
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+Set-StrictMode -Version Latest
 $ErrorActionPreference = [System.Management.Automation.ActionPreference]::Stop
 
 
-# Build Regions
+# Load Regions
 
+$Providers = @('AWS','Azure','GCP')
 $Regions = @{}
-ForEach ($provider In 'gcp','aws','azure') {
-    $Regions[$provider] = Get-Content -LiteralPath "$PSScriptRoot/$provider/regions.txt" -Encoding utf8
-}
-$All = @('GCP','AWS','Azure').ForEach({
-    $provider = $_
-    $Regions[$provider].ForEach({New-Object -TypeName PSObject -Property @{
-        Provider=$provider
+$Providers.ForEach({
+    $Regions[$_] = Get-Content -LiteralPath "$PSScriptRoot/$_/regions.txt" -Encoding utf8
+})
+$All = $Providers.ForEach({
+    Param ($Provider=$_)
+    $Regions[$Provider].ForEach({New-Object -TypeName PSObject -Property @{
+        Provider=$Provider
         Region=$_
     }})
 })
 $OcrRegions = @{
-    gcp=$Regions['gcp']
-    aws=Get-Content -LiteralPath "$PSScriptRoot/aws/rekognition-regions.txt" -Encoding utf8
-    azure=Get-Content -LiteralPath "$PSScriptRoot/azure/cognitive-regions.txt" -Encoding utf8
+    AWS=Get-Content -LiteralPath "$PSScriptRoot/aws/rekognition-regions.txt" -Encoding utf8
+    Azure=Get-Content -LiteralPath "$PSScriptRoot/azure/cognitive-regions.txt" -Encoding utf8
+    GCP=$Regions['GCP']
 }
-$OcrAll = @('GCP', 'AWS','Azure').ForEach({
-    $provider = $_
-    $OcrRegions[$provider].ForEach({New-Object -TypeName PSObject -Property @{
-        Provider=$provider
+$OcrAll = $Providers.ForEach({
+    Param ($Provider=$_)
+    $OcrRegions[$Provider].ForEach({New-Object -TypeName PSObject -Property @{
+        Provider=$Provider
         Region=$_
     }})
 })
@@ -33,10 +49,10 @@ $OcrAll = @('GCP', 'AWS','Azure').ForEach({
 
 $GCP = $All.Where({ $_.Provider -eq 'GCP' })
 $GCP_Project = Get-Content -LiteralPath "$PSScriptRoot/gcp/.project" -Encoding utf8
-$GCP_Storage =`
+$GCP_StorageBucket =`
 "((function () {
   const { Storage } = require('@google-cloud/storage')
-  return new Storage()
+  return new Storage().bucket(process.env.BUCKET)
 })())"
 $GCP_Ocr = `
 "(async function (fileName) {
@@ -65,9 +81,9 @@ $Azure = $All.Where({ $_.Provider -eq 'Azure' })
 $Azure_Group = Get-Content -LiteralPath "$PSScriptRoot/azure/.group" -Encoding utf8
 $Azure_Container = Get-Content -LiteralPath "$PSScriptRoot/azure/.container" -Encoding utf8
 $Azure_CognitiveKeys = @{}
-ForEach ($region In $OcrRegions['azure']) {
-    $Azure_CognitiveKeys[$region] = Get-Content -LiteralPath "$PSScriptRoot/azure/.cognitive-keys/$region" -Encoding utf8
-}
+$OcrRegions['Azure'].ForEach({
+    $Azure_CognitiveKeys[$_] = Get-Content -LiteralPath "$PSScriptRoot/azure/.cognitive-keys/$_" -Encoding utf8
+})
 $Azure_ContainerClient =`
 "((function () {
   const { BlobServiceClient } = require('@azure/storage-blob')
@@ -99,28 +115,22 @@ $Azure_Ocr = `
 $AWS = $All.Where({ $_.Provider -eq 'AWS' })
 $AWS_Prefix = Get-Content -LiteralPath "$PSScriptRoot/aws/.prefix" -Encoding utf8
 $AWS_LambdaUrls = @{}
-ForEach ($region In $Regions['aws']) {
-    $AWS_LambdaUrls[$region] = Get-Content -LiteralPath "$PSScriptRoot/aws/.lambda-urls/$region" -Encoding utf8
-}
+$Regions['AWS'].ForEach({
+    $AWS_LambdaUrls[$_] = Get-Content -LiteralPath "$PSScriptRoot/aws/.lambda-urls/$_" -Encoding utf8
+})
 $AWS_S3 =`
 "((function () {
   const AWS = require('aws-sdk')
   return new AWS.S3()
 })())"
+$AWS_Bucket = "{ Bucket: process.env.BUCKET }"
 $AWS_Ocr = `
 "(async function (fileName) {
   const { createHash, createHmac } = await import('node:crypto')
   const method = 'POST'
   const host = ``rekognition.`${process.env.REGION}.amazonaws.com``
   const target = 'RekognitionService.DetectText'
-  const body = JSON.stringify({
-    Image: {
-      S3Object: {
-        Bucket: process.env.BUCKET,
-        Name: fileName
-      }
-    }
-  })
+  const body = JSON.stringify({ Image: { S3Object: { ...$AWS_Bucket, Name: fileName } } })
   const bodyHash = createHash('sha256').update(body).digest('hex')
   const dateIso = new Date().toISOString().replace(/[:\-]|\.\d{3}/g, '')
   const datePart = dateIso.substr(0, 8)
@@ -181,7 +191,7 @@ Function ConvertTo-ExecCommand {
     )
 
 "const { exec } = await import('node:child_process')
-return new Promise((resolve, reject) => {
+return await new Promise((resolve, reject) => {
   exec($(ConvertTo-Json $Command), (error, stdout, stderr) => {
     if (error) {
       reject(error)
@@ -197,7 +207,7 @@ return new Promise((resolve, reject) => {
 Filter Invoke-CloudFunction {
     Param (
         [Parameter(ValueFromPipelineByPropertyName=$true)]
-        [ValidateSet('GCP','AWS','Azure')]
+        [ValidateSet('AWS','Azure','GCP')]
         [string] $Provider
     ,
         [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
@@ -223,8 +233,11 @@ Filter Invoke-CloudFunction {
         'Azure' { '/home/site/wwwroot/v1/index.js' }
         Default { Throw [System.NotImplementedException]::new() }
     }
-    $fullCommand = "const { createRequire } = await import('node:module')
-const require = createRequire($(ConvertTo-Json $root))
+    $fullCommand = `
+"const require = await ((async function () {
+  const { createRequire } = await import('node:module')
+  return createRequire($(ConvertTo-Json $root))
+})())
 $Command"
     $key = Get-Content -LiteralPath "$PSScriptRoot/$($Provider.ToLowerInvariant())/.key" -Encoding utf8
     $time = [long](([datetime]::UtcNow.Ticks - 621355968000000000) / 10000)
@@ -252,7 +265,7 @@ $Command"
 Filter Initialize-CloudFiles {
     Param (
         [Parameter(ValueFromPipelineByPropertyName=$true)]
-        [ValidateSet('GCP','AWS','Azure')]
+        [ValidateSet('AWS','Azure','GCP')]
         [string] $Provider
     ,
         [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
@@ -322,8 +335,8 @@ const errors = []
 for (const [file, content] of files) {
   try {
     await s3.putObject({
+      ...$AWS_Bucket,
       Body: content(),
-      Bucket: process.env.BUCKET,
       Key: file,
     }).promise()
   } catch (err) {
@@ -339,11 +352,11 @@ return errors
 "
 } 'GCP' {
 "
-const storage = $GCP_Storage
+const bucket = $GCP_StorageBucket
 const errors = []
 for (const [file, content] of files) {
   try {
-    await storage.bucket(process.env.BUCKET).file(file).save(content())
+    await bucket.file(file).save(content())
   } catch (err) {
     errors.push({
       Provider: 'GCP',
@@ -388,7 +401,7 @@ Filter Copy-CloudFile {
         [byte[]] $SourceBytes
     ,
         [Parameter(ValueFromPipelineByPropertyName=$true)]
-        [ValidateSet('GCP','AWS','Azure')]
+        [ValidateSet('AWS','Azure','GCP')]
         [string] $Provider
     ,
         [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
@@ -408,7 +421,7 @@ const data = $(Switch ($PSCmdlet.ParameterSetName) {
 })
 $(Switch ($Provider) {
     'AWS' { "await $AWS_S3.putObject({ Body: data, Bucket: process.env.BUCKET, Key: name }).promise()" }
-    'GCP' { "await $GCP_Storage.bucket(process.env.BUCKET).file(name).save(data)" }
+    'GCP' { "await $GCP_StorageBucket.file(name).save(data)" }
     'Azure' { "await $Azure_ContainerClient.getBlockBlobClient(name).uploadData(data)" }
     Default { Throw [System.NotImplementedException]::new() }
 })"
@@ -418,7 +431,7 @@ $(Switch ($Provider) {
 Filter Test-CloudFile {
     Param (
         [Parameter(ValueFromPipelineByPropertyName=$true)]
-        [ValidateSet('GCP','AWS','Azure')]
+        [ValidateSet('AWS','Azure','GCP')]
         [string] $Provider
     ,
         [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
@@ -433,7 +446,7 @@ Filter Test-CloudFile {
 $(Switch ($Provider) {
     'AWS' {
 "try {
-  await $AWS_S3.headObject({ Bucket: process.env.BUCKET, Key: name }).promise()
+  await $AWS_S3.headObject({ ...$AWS_Bucket, Key: name }).promise()
   return true
 } catch (err) {
   if (err.code !== 'NotFound') {
@@ -442,7 +455,7 @@ $(Switch ($Provider) {
   return false
 }"
     }
-    'GCP' { "return await $GCP_Storage.bucket(process.env.BUCKET).file(name).exists()" }
+    'GCP' { "return await $GCP_StorageBucket.file(name).exists()" }
     'Azure' { "return (await $Azure_ContainerClient.getBlockBlobClient(name).exists()).toString()" }
     Default { Throw [System.NotImplementedException]::new() }
 })"
@@ -452,7 +465,7 @@ $(Switch ($Provider) {
 Filter Clear-CloudFiles {
     Param (
         [Parameter(ValueFromPipelineByPropertyName=$true)]
-        [ValidateSet('GCP','AWS','Azure')]
+        [ValidateSet('AWS','Azure','GCP')]
         [string] $Provider
     ,
         [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
@@ -467,15 +480,12 @@ const s3 = $AWS_S3
 const errors = []
 let marker = ''
 while (true) {
-  const listObjects = await s3.listObjects({
-    Bucket: process.env.BUCKET,
-    Marker: marker
-  }).promise()
+  const listObjects = await s3.listObjects({ ...$AWS_Bucket, Marker: marker }).promise()
   if (listObjects.Contents.length === 0) {
     break
   }
   const deleteObjects = await s3.deleteObjects({
-    Bucket: process.env.BUCKET,
+    ...$AWS_Bucket,
     Delete: {
       Objects: listObjects.Contents.map(e => ({ Key: e.Key })),
       Quiet: true
@@ -496,12 +506,12 @@ return errors
 "
 } 'GCP' {
 "
-const storage = $GCP_Storage
-const [files] = await storage.bucket(process.env.BUCKET).getFiles()
+const bucket = $GCP_StorageBucket
+const [files] = await bucket.getFiles()
 const errors = []
 for (const file of files) {
   try {
-    await storage.bucket(process.env.BUCKET).file(file.name).delete()
+    await bucket.file(file.name).delete()
   } catch (err) {
     errors.push({
       Provider: 'GCP',
@@ -539,7 +549,7 @@ return errors
 Filter Get-CloudFileRoot {
     Param (
         [Parameter(ValueFromPipelineByPropertyName=$true)]
-        [ValidateSet('GCP','AWS','Azure')]
+        [ValidateSet('AWS','Azure','GCP')]
         [string] $Provider
     ,
         [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
@@ -560,7 +570,7 @@ Filter Get-CloudFileRoot {
 Filter Test-CloudFileTransfer {
     Param (
         [Parameter(ValueFromPipelineByPropertyName=$true)]
-        [ValidateSet('GCP','AWS','Azure')]
+        [ValidateSet('AWS','Azure','GCP')]
         [string] $FromProvider
     ,
         [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
@@ -612,7 +622,7 @@ return results"
 Filter Test-CloudOcrTransfer {
     Param (
         [Parameter(ValueFromPipelineByPropertyName=$true)]
-        [ValidateSet('GCP','AWS','Azure')]
+        [ValidateSet('AWS','Azure','GCP')]
         [string] $Provider
     ,
         [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
@@ -703,7 +713,7 @@ return results"
 Filter Invoke-CloudOcr {
     Param (
         [Parameter(ValueFromPipelineByPropertyName=$true)]
-        [ValidateSet('GCP','AWS','Azure')]
+        [ValidateSet('AWS','Azure','GCP')]
         [string] $Provider
     ,
         [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
