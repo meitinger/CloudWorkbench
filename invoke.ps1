@@ -195,8 +195,7 @@ return await new Promise((resolve, reject) => {
   exec($(ConvertTo-Json $Command), (error, stdout, stderr) => {
     if (error) {
       reject(error)
-    }
-    else {
+    } else {
       resolve(stdout)
     }
   })
@@ -222,15 +221,15 @@ Filter Invoke-CloudFunction {
     If ($Region -notin $Regions[$Provider]) { Throw "Unknown region '$Region', supported are $($Regions[$Provider] -join ', ')." }
     $location = $Region.ToLowerInvariant()
     $url = Switch ($Provider) {
-        'GCP' { "https://$location-$GCP_Project.cloudfunctions.net/function" }
-        'AWS' { $AWS_LambdaUrls[$Region] }
+        'AWS'   { $AWS_LambdaUrls[$Region] }
         'Azure' { "https://$Azure_Group-$location-function.azurewebsites.net/api/v1" }
+        'GCP'   { "https://$location-$GCP_Project.cloudfunctions.net/function" }
         Default { Throw [System.NotImplementedException]::new() }
     }
     $root = Switch ($Provider) {
-        'GCP' { '/workspace/index.js' }
-        'AWS' { '/var/task/index.mjs' }
+        'AWS'   { '/var/task/index.mjs' }
         'Azure' { '/home/site/wwwroot/v1/index.js' }
+        'GCP'   { '/workspace/index.js' }
         Default { Throw [System.NotImplementedException]::new() }
     }
     $fullCommand = `
@@ -255,8 +254,7 @@ $Command"
         -ContentType 'application/json'
     If ($Raw) {
         $reponse.Content
-    }
-    Else {
+    } Else {
         ConvertFrom-Json -InputObject $reponse.Content
     }
 }
@@ -328,67 +326,31 @@ const files = [
   ...sizes.map(size => [``random_`${size}.bin``, () => randomBytes(size)])
 ]
 $(Switch ($Provider) {
-'AWS' {
-"
-const s3 = $AWS_S3
+  'AWS'   { "const s3 = $AWS_S3" }
+  'Azure' { "const containerClient = $Azure_ContainerClient" }
+  'GCP'   { "const bucket = $GCP_StorageBucket" }
+  Default { Throw [System.NotImplementedException]::new() }
+})
 const errors = []
-for (const [file, content] of files) {
+for (const [name, createData] of files) {
   try {
-    await s3.putObject({
-      ...$AWS_Bucket,
-      Body: content(),
-      Key: file,
-    }).promise()
+    data = createData()
+    $(Switch ($Provider) {
+      'AWS'   { "await s3.putObject({ ...$AWS_Bucket, Key: name, Body: data }).promise()" }
+      'Azure' { "await containerClient.getBlockBlobClient(name).uploadData(data)" }
+      'GCP'   { "await bucket.file(name).save(data)" }
+      Default { Throw [System.NotImplementedException]::new() }
+    })
   } catch (err) {
     errors.push({
-      Provider: 'AWS',
-      Region: process.env.REGION,
-      File: file,
+      Provider: $(ConvertTo-Json $Provider),
+      Region: $(ConvertTo-Json $Region),
+      FileName: name,
       Reason: String(err)
     })
   }
 }
-return errors
-"
-} 'GCP' {
-"
-const bucket = $GCP_StorageBucket
-const errors = []
-for (const [file, content] of files) {
-  try {
-    await bucket.file(file).save(content())
-  } catch (err) {
-    errors.push({
-      Provider: 'GCP',
-      Region: process.env.REGION,
-      File: file,
-      Reason: String(err)
-    })
-  }
-}
-return errors
-"
-} 'Azure' {
-"
-const containerClient = $Azure_ContainerClient
-const errors = []
-for (const [file, content] of files) {
-  const blockBlockClient = containerClient.getBlockBlobClient(file)
-  try {
-    await blockBlockClient.uploadData(content())
-  } catch (err) {
-    errors.push({
-      Provider: 'Azure',
-      Region: process.env.REGION,
-      File: file,
-      Reason: String(err)
-    })
-  }
-}
-return errors
-"
-} Default { Throw [System.NotImplementedException]::new() }
-})"
+return errors"
 }
 
 
@@ -415,15 +377,15 @@ Filter Copy-CloudFile {
 "const { Buffer } = await import('node:buffer')
 const name = $(ConvertTo-Json $DestinationName)
 const data = $(Switch ($PSCmdlet.ParameterSetName) {
-    'uri' { "Buffer.from(await (await fetch($(ConvertTo-Json $SourceUri))).arrayBuffer())" }
-    'bytes' { "Buffer.from($(ConvertTo-Json ([System.Convert]::ToBase64String($SourceBytes))), 'base64')" }
-    Default { Throw [System.NotImplementedException]::new() }
+  'uri'   { "Buffer.from(await (await fetch($(ConvertTo-Json $SourceUri))).arrayBuffer())" }
+  'bytes' { "Buffer.from($(ConvertTo-Json ([System.Convert]::ToBase64String($SourceBytes))), 'base64')" }
+  Default { Throw [System.NotImplementedException]::new() }
 })
 $(Switch ($Provider) {
-    'AWS' { "await $AWS_S3.putObject({ Body: data, Bucket: process.env.BUCKET, Key: name }).promise()" }
-    'GCP' { "await $GCP_StorageBucket.file(name).save(data)" }
-    'Azure' { "await $Azure_ContainerClient.getBlockBlobClient(name).uploadData(data)" }
-    Default { Throw [System.NotImplementedException]::new() }
+  'AWS'   { "await $AWS_S3.putObject({ ...$AWS_Bucket, Key: name, Body: data }).promise()" }
+  'Azure' { "await $Azure_ContainerClient.getBlockBlobClient(name).uploadData(data)" }
+  'GCP'   { "await $GCP_StorageBucket.file(name).save(data)" }
+  Default { Throw [System.NotImplementedException]::new() }
 })"
 }
 
@@ -443,21 +405,12 @@ Filter Test-CloudFile {
 
     Invoke-CloudFunction -Provider $Provider -Region $Region -Command `
 "const name = $(ConvertTo-Json $Name)
+const rethrow = (err) => { throw err }
 $(Switch ($Provider) {
-    'AWS' {
-"try {
-  await $AWS_S3.headObject({ ...$AWS_Bucket, Key: name }).promise()
-  return true
-} catch (err) {
-  if (err.code !== 'NotFound') {
-    throw err
-  }
-  return false
-}"
-    }
-    'GCP' { "return await $GCP_StorageBucket.file(name).exists()" }
-    'Azure' { "return (await $Azure_ContainerClient.getBlockBlobClient(name).exists()).toString()" }
-    Default { Throw [System.NotImplementedException]::new() }
+  'AWS'   { "return await $AWS_S3.headObject({ ...$AWS_Bucket, Key: name }).promise().then(() => true).catch(err => err.code !== 'NotFound' && rethrow(err))" }
+  'Azure' { "return (await $Azure_ContainerClient.getBlockBlobClient(name).exists()).toString()" }
+  'GCP'   { "return await $GCP_StorageBucket.file(name).exists()" }
+  Default { Throw [System.NotImplementedException]::new() }
 })"
 }
 
@@ -473,8 +426,14 @@ Filter Clear-CloudFiles {
     )
 
     Invoke-CloudFunction -Provider $Provider -Region $Region -Command `
-"$(Switch ($Provider) {
-'AWS' {
+"const buildError = (fileName, err) => ({
+  Provider: $(ConvertTo-Json $Provider),
+  Region: $(ConvertTo-Json $Region),
+  FileName: fileName,
+  Reason: String(err)
+})
+$(Switch ($Provider) {
+  'AWS' {
 "
 const s3 = $AWS_S3
 const errors = []
@@ -491,16 +450,21 @@ while (true) {
       Quiet: true
     }
   }).promise()
-  errors.push(...deleteObjects.Errors.map(e => ({
-    Provider: 'AWS',
-    Region: process.env.REGION,
-    File: e.Key,
-    Reason: e.Code
-  })))
+  errors.push(...deleteObjects.Errors.map(e => buildError(e.Key, e.Code)))
   if (!listObjects.IsTruncated) {
     break
   }
   marker = listObjects.Marker
+}
+return errors
+"
+} 'Azure' {
+"
+const containerClient = $Azure_ContainerClient
+const errors = []
+for await (const blob of containerClient.listBlobsFlat()) {
+  try { await containerClient.deleteBlob(blob.name) }
+  catch (err) { errors.push(buildError(blob.name, err)) }
 }
 return errors
 "
@@ -510,34 +474,8 @@ const bucket = $GCP_StorageBucket
 const [files] = await bucket.getFiles()
 const errors = []
 for (const file of files) {
-  try {
-    await bucket.file(file.name).delete()
-  } catch (err) {
-    errors.push({
-      Provider: 'GCP',
-      Region: process.env.REGION,
-      File: file.name,
-      Reason: String(err)
-    })
-  }
-}
-return errors
-"
-} 'Azure' {
-"
-const containerClient = $Azure_ContainerClient
-const errors = []
-for await (const blob of containerClient.listBlobsFlat()) {
-  try {
-    await containerClient.deleteBlob(blob.name)
-  } catch (err) {
-    errors.push({
-      Provider: 'Azure',
-      Region: process.env.REGION,
-      File: blob.name,
-      Reason: String(err)
-    })
-  }
+  try { await bucket.file(file.name).delete() }
+  catch (err) { errors.push(buildError(file.name, err)) }
 }
 return errors
 "
@@ -608,7 +546,7 @@ for (const [file, expectedSize] of files) {
     }).on('error', reject))
     const time = process.hrtime(hrt)
     if (downloadedSize !== expectedSize) {
-      throw Error(``Received `${downloadedSize}, expected `${expectedSize}.``)
+      throw ``Received `${downloadedSize}, expected `${expectedSize}.``
     }
     results.push({ file, time })
   } catch (err) {
@@ -644,7 +582,7 @@ for (const [file, expectedSize] of files) {
   for (let batch = 1; batch <= 5; batch++) {
     try {
 $(Switch ($Provider) {
-'AWS' {
+  'AWS' {
 "
       const task = await $AWS_Ocr(file)
       $fetchTesk
@@ -654,6 +592,18 @@ $(Switch ($Provider) {
       const failure = await response.json()
       if (failure.__type !== 'InvalidImageFormatException') {
         throw ``DetectText failed with `${failure.__type}.``
+      }
+"
+} 'Azure' {
+"
+      const task = await $Azure_Ocr(file, $(ConvertTo-Json $Azure_CognitiveKeys[$Region]))
+      $fetchTesk
+      if (response.status !== 400) {
+        throw ``OCR finished with `${response.status} `${response.statusText}.``
+      }
+      const failure = await response.json()
+      if (failure.error.innererror.code !== 'InvalidImageFormat') {
+        throw ``OCR failed with `${failure.error.innererror.code}.``
       }
 "
 } 'GCP' {
@@ -667,18 +617,6 @@ $(Switch ($Provider) {
       if (error.message !== 'Bad image data.') {
         throw ``Annotate failed with `${error.message}.``
         // very likely 'Annotate failed with We can not access the URL currently. Please download the content and pass it in.'
-      }
-"
-} 'Azure' {
-"
-      const task = await $Azure_Ocr(file, $(ConvertTo-Json $Azure_CognitiveKeys[$Region]))
-      $fetchTesk
-      if (response.status !== 400) {
-        throw ``OCR finished with `${response.status} `${response.statusText}.``
-      }
-      const failure = await response.json()
-      if (failure.error.innererror.code !== 'InvalidImageFormat') {
-        throw ``OCR failed with `${failure.error.innererror.code}.``
       }
 "
 } Default { Throw [System.NotImplementedException]::new() }
@@ -697,7 +635,7 @@ $(Switch ($Provider) {
       const downloadedSize = (await response.blob()).size
       const time = process.hrtime(hrt)
       if (downloadedSize !== expectedSize) {
-        throw Error(``Received `${downloadedSize}, expected `${expectedSize}.``)
+        throw ``Received `${downloadedSize}, expected `${expectedSize}.``
       }
       results.push({ batch, file, ocr: false, time })
     }
@@ -727,10 +665,10 @@ Filter Invoke-CloudOcr {
     Invoke-CloudFunction -Provider $Provider -Region $Region -Command `
 "const fileName = $(ConvertTo-Json $FileName)
 const task = await $(Switch ($Provider) {
-    'AWS' { "$AWS_Ocr(fileName)" }
-    'GCP' { "$GCP_Ocr(fileName)" }
-    'Azure' { "$Azure_Ocr(fileName, $(ConvertTo-Json $Azure_CognitiveKeys[$Region]))" }
-    Default { Throw [System.NotImplementedException]::new() }
+  'AWS'   { "$AWS_Ocr(fileName)" }
+  'Azure' { "$Azure_Ocr(fileName, $(ConvertTo-Json $Azure_CognitiveKeys[$Region]))" }
+  'GCP'   { "$GCP_Ocr(fileName)" }
+  Default { Throw [System.NotImplementedException]::new() }
 })
 const hrt = process.hrtime()
 const response = await fetch(task.uri, task.options)
@@ -738,6 +676,9 @@ const time = process.hrtime(hrt)
 const result = await response.json()
 return {
   ...result,
+  Provider: $(ConvertTo-Json $Provider),
+  Region: $(ConvertTo-Json $Region),
+  FileName: fileName,
   Status: response.status,
   Time: time[0] + time[1] / 1000000000
 }"
@@ -764,8 +705,7 @@ return {
 #                File = $_.file
 #                Time = $_.time[0] + ($_.time[1] / 1000000000)
 #             }
-#         }
-#         Else {
+#         } Else {
 #             Write-Warning "$($_.file) in $name failed: $($_.error)"
 #         }
 #     }
@@ -787,8 +727,7 @@ return {
 #                File = $_.file
 #                Time = $_.time[0] + ($_.time[1] / 1000000000)
 #             }
-#         }
-#         Else {
+#         } Else {
 #             Write-Warning "$($_.file) batch #$($_.batch) in $name failed: $($_.error)"
 #         }
 #     }
