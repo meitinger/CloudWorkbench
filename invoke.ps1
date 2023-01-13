@@ -322,8 +322,10 @@ const files = [
   ['zero.bin', () => Buffer.alloc(0)],
   ['image_ping.png', () => png(() => null, 0)],
   ['image_full.png', () => png(() => randomBytes(10*1024), 408)],
-  ...sizes.map(size => [``zero_`${size}.bin``, () => Buffer.alloc(size)]),
-  ...sizes.map(size => [``random_`${size}.bin``, () => randomBytes(size)])
+  ...sizes.flatMap(size => [
+    [``zero_`${size}.bin``, () => Buffer.alloc(size)],
+    [``random_`${size}.bin``, () => randomBytes(size)]
+  ])
 ]
 $(Switch ($Provider) {
   'AWS'   { "const s3 = $AWS_S3" }
@@ -528,8 +530,10 @@ const root = $(Get-CloudFileRoot -Provider $FromProvider -Region $FromRegion | C
 const sizes = [512, 10*1024, 1024*1024, 10*1024*1024]
 const files = [
   ['zero.bin', 0],
-  ...sizes.map(size => [``zero_`${size}.bin``, size]),
-  ...sizes.map(size => [``random_`${size}.bin``, size])
+  ...sizes.flatMap(size => [
+    [``zero_`${size}.bin``, size],
+    [``random_`${size}.bin``, size]
+  ])
 ]
 const results = []
 for (const [file, expectedSize] of files) {
