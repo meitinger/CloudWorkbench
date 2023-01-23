@@ -689,6 +689,32 @@ return {
 }
 
 
+Filter Resolve-CloudDnsName {
+    Param (
+        [Parameter(ValueFromPipelineByPropertyName=$true)]
+        [ValidateSet('AWS','Azure','GCP')]
+        [string] $Provider
+    ,
+        [Parameter(Mandatory=$true, ValueFromPipelineByPropertyName=$true)]
+        [string] $Region
+    ,
+        [Parameter(Mandatory=$true)]
+        [string] $Name
+        ,
+        [ValidateSet('A','AAAA','ANY','CAA','CNAME','MX','NAPTR','NS','PTR','SOA','SRV','TXT')]
+        [string] $Type = 'A'
+    )
+
+    Invoke-CloudFunction -Provider $Provider -Region $Region -Command `
+"const dns = require('node:dns')
+return await new Promise((resolve, reject) => dns.resolve(
+  $(ConvertTo-Json $Name),
+  $(ConvertTo-Json $Type.ToUpperInvariant()),
+  (err, records) => err ? reject(err) : resolve(records)
+))"
+}
+
+
 # Prepare:
 # $All | ForEach-Object -ThrottleLimit 20 -Parallel { . .\invoke.ps1; $current = $_.Provider + '-' + $_.Region; Write-Host "Prepare $current..."; Try { $_ | Initialize-CloudFiles } Catch { Write-Warning "$current failed: $_" } }
 
