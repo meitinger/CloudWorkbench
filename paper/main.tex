@@ -196,7 +196,7 @@ In addition, no multi-region redundancy has been used, and - where available - a
 \subsection{Endpoints and Regions}\label{sec:endpoints}
 Up to now, we've only talked about publicly accessible URLs for files, but not how they work on the different providers, i.e. what the storage service's endpoint looks like.
 \begin{description}
-    \item[\AWS:] \texttt{https://<bucket>.<region>.amazonaws.com/<object>}\cite{aws_s3_access}\\
+    \item[\AWS:] \texttt{https://<bucket>.s3.<region>.amazonaws.com/<object>}\cite{aws_s3_access}\\
     The region is part of the endpoint's host name, which also resolves to an IP address in that particular region. 
     \item[\Azure:] \texttt{https://<storageaccount>.blob.core.windows.net/<container>/<blob>}\cite{azure_storage_access}\\
     The last subdomain is the name of the container's \textit{storage account}, which is a collection of containers (and other storage solutions), and is also bound to a specific region.\cite{azure_storage_accounts} When a client resolves the storage account endpoint's host name, it gets a \texttt{CNAME} entry to another host that resides in that region and has an IP address in that particular region as well.
