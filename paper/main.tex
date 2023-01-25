@@ -202,7 +202,7 @@ Up to now, we've only talked about publicly accessible URLs for files, but not h
     The last subdomain is the name of the container's \textit{storage account}, which is a collection of containers (and other storage solutions), and is also bound to a specific region.\cite{azure_storage_accounts} When a client resolves the storage account endpoint's host name, it gets a \texttt{CNAME} entry to another host that resides in that region and has an IP address in that particular region as well.
     \item[\GCP:] \texttt{https://storage.googleapis.com/<bucket>/<object>}\cite{gcp_storage_acces}\\
     Unlike \AWS and \Azure, \GCP uses \textit{anycast} IP addresses.\cite{cloudflare_anycast} So from outside of Google's network, it is not possible to deduce the region of the bucket by tools like IP geolocation, as the returned IP address will be routed by BGP to the nearest data center, and then internally by Google.\\
-    However, when \texttt{storage.googleapis.com} is resolved within \GCP, say from a Cloud Function, a \texttt{CNAME} to an internal storage handling server is returned. So for example in region \textit{europe-west3} (which is located in Frankfurt) the host name \texttt{fra24s05-in-x10.1e100.net} is returned, which has a region-bound IP address instead of an anycast one. As these host names can be accessed from anywhere within the \GCP, it is possible to 'enforce' a specific endpoint region. Also, IP geolocation is again possible.
+    However, when \texttt{storage.googleapis.com} is resolved within \GCP, say from a Cloud Function, IP addresses to internal storage handling servers in the same region are returned. So for example in region \textit{europe-west3} (which is located in Frankfurt) the IP of host \texttt{fra24s05-in-x10.1e100.net} is returned, which has a region-bound IP address instead of an anycast one. As these hosts can be accessed from anywhere within the \GCP, it is possible to 'enforce' a specific endpoint region.
 \end{description}
 Figure \ref{fig:regions} was composed using geolocation tools and publicly available information.\cite{aws_regions,azure_regions,gcp_regions} It depicts all considered regions and locations.
 \begin{figure}[!ht]
@@ -283,7 +283,7 @@ For a more concise summary see table \ref{tab:capabilities_construct}.
     \centering
     \begin{tabular}{ |c!{\vrule width 2pt}c|c|c|c|c| } 
         \hline
-        Provider & Concept & \makecell{From\\Existing\\Objects/\\Blocks} & \makecell{From\\External\\URL} & \makecell{Partial\\Content} & \makecell{Parallel\\Part\\Upload}\\
+        Provider & Concept & \makecell{From\\Existing\\Objects/\\Blobls} & \makecell{From\\External\\URL} & \makecell{Partial\\Content} & \makecell{Parallel\\Part\\Upload}\\
         \noalign{\hrule height 2pt}
         \AWS & \makecell{Multipart\\Uploads\cite{aws_s3_multipart}} & yes\cite{aws_s3_uploadpartcopy} & no\cite{aws_s3_uploadpart,aws_s3_uploadpartcopy} & \makecell{yes\cite{aws_s3_uploadpartcopy}\\(min. 5MB\\chunks)} & yes\cite{aws_s3_multipart}\\
         \hline
